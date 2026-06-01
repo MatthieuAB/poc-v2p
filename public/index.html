@@ -8,6 +8,8 @@
   <!-- Leaflet.js — carte interactive -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Leaflet Rotate — rotation carte navigation -->
+  <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
     :root {
@@ -65,18 +67,34 @@
 
     /* ── CARTE ── */
     .map-container { margin:0 14px 12px; border-radius:14px; overflow:hidden; border:2px solid #E5E7EB; position:relative; }
-    .map-container.danger-map { border-color:var(--red); }
+    .map-container.danger-map { border-color:var(--red); box-shadow:0 0 0 3px rgba(220,38,38,.25); }
     .map-container.safe-map   { border-color:#BBF7D0; }
-    #map { height:220px; width:100%; }
+    #map { height:260px; width:100%; background:#1a1a2e; }
     .map-label {
       position:absolute; top:8px; left:8px; z-index:1000;
-      background:rgba(255,255,255,.92); padding:4px 10px; border-radius:20px;
-      font-size:11px; font-weight:700; color:var(--blue-dark);
-      box-shadow:0 1px 4px rgba(0,0,0,.15);
+      background:rgba(0,0,0,.65); padding:4px 10px; border-radius:20px;
+      font-size:11px; font-weight:700; color:white;
+      box-shadow:0 1px 4px rgba(0,0,0,.3);
+      backdrop-filter: blur(4px);
     }
-    .map-waiting { display:flex; align-items:center; justify-content:center; height:220px; background:#F9FAFB; flex-direction:column; gap:8px; }
+    .map-compass {
+      position:absolute; top:8px; right:8px; z-index:1000;
+      background:rgba(0,0,0,.65); width:32px; height:32px; border-radius:50%;
+      display:flex; align-items:center; justify-content:center;
+      font-size:16px; backdrop-filter:blur(4px);
+      box-shadow:0 1px 4px rgba(0,0,0,.3);
+    }
+    .map-dist-badge {
+      position:absolute; bottom:10px; left:50%; transform:translateX(-50%);
+      z-index:1000; background:rgba(0,0,0,.7); color:white;
+      padding:5px 14px; border-radius:20px; font-size:12px; font-weight:700;
+      backdrop-filter:blur(4px); display:none;
+    }
+    .map-dist-badge.danger { background:rgba(220,38,38,.85); }
+    .map-dist-badge.safe   { background:rgba(22,163,74,.85); }
+    .map-waiting { display:flex; align-items:center; justify-content:center; height:260px; background:#1a1a2e; flex-direction:column; gap:8px; }
     .map-waiting-icon { font-size:32px; }
-    .map-waiting-text { font-size:13px; color:var(--gray); }
+    .map-waiting-text { font-size:13px; color:#94A3B8; }
 
     /* Cards */
     .cards-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:0 14px; }
@@ -205,7 +223,9 @@
       <div class="map-waiting-text">La carte apparaît dès que le GPS est actif</div>
     </div>
     <div id="map" style="display:none"></div>
-    <div class="map-label" id="map-label" style="display:none">📍 Carte en temps réel</div>
+    <div class="map-label"    id="map-label"    style="display:none">📍 Navigation</div>
+    <div class="map-compass"  id="map-compass"  style="display:none">🧭</div>
+    <div class="map-dist-badge" id="map-dist-badge"></div>
   </div>
 
   <!-- Cards -->
@@ -272,65 +292,131 @@
   let lastSendTime = 0, audioCtx = null;
   let toastTimeout = null, alarmInterval = null;
 
-  // ── Carte Leaflet ────────────────────────────────────────────────────────────
+  // ── Carte Leaflet (mode navigation) ─────────────────────────────────────────
   let map = null, myMarker = null, otherMarker = null, alertCircle = null;
   let mapReady = false;
+  let currentBearing = 0, prevLat = null, prevLng = null;
 
   function initMap(lat, lng) {
     if (mapReady) return;
-    document.getElementById('map-waiting').style.display = 'none';
-    document.getElementById('map').style.display         = 'block';
-    document.getElementById('map-label').style.display   = 'block';
+    document.getElementById('map-waiting').style.display  = 'none';
+    document.getElementById('map').style.display          = 'block';
+    document.getElementById('map-label').style.display    = 'block';
+    document.getElementById('map-compass').style.display  = 'flex';
 
-    map = L.map('map', { zoomControl: true, attributionControl: false }).setView([lat, lng], 17);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+    // Carte sombre style navigation avec rotation activée
+    map = L.map('map', {
+      rotate: true,
+      rotateControl: false,
+      zoomControl: false,
+      attributionControl: false,
+      bearing: 0,
+      zoom: 18
+    }).setView([lat, lng], 18);
 
-    // Marqueur "moi"
-    const myIcon = L.divIcon({
-      html: `<div style="background:${role==='vru'?'#2563EB':'#EA580C'};width:16px;height:16px;border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,.4)"></div>`,
-      iconSize:[16,16], iconAnchor:[8,8], className:''
-    });
-    myMarker = L.marker([lat, lng], { icon: myIcon })
-      .addTo(map)
-      .bindPopup(role === 'vru' ? '🚴 Moi (VRU)' : '🚗 Moi (Conducteur)');
-
-    // Cercle d'alerte (50 m autour de moi)
-    alertCircle = L.circle([lat, lng], {
-      radius: 50, color: '#2563EB', fillColor: '#DBEAFE',
-      fillOpacity: 0.25, weight: 2, dashArray: '6 4'
+    // Tuiles sombres style Waze/navigation
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19, subdomains: 'abcd'
     }).addTo(map);
 
+    // Cercle d'alerte
+    alertCircle = L.circle([lat, lng], {
+      radius: 50, color: '#2563EB', fillColor: '#2563EB',
+      fillOpacity: 0.12, weight: 2, dashArray: '6 4'
+    }).addTo(map);
+
+    // Marqueur "moi" — chevron directionnel
+    _createMyMarker(lat, lng, 0);
+
     mapReady = true;
+    prevLat = lat; prevLng = lng;
   }
 
-  function updateMyMarker(lat, lng) {
+  function _createMyMarker(lat, lng, heading) {
+    const color = role === 'vru' ? '#2563EB' : '#EA580C';
+    const icon = L.divIcon({
+      html: `<div style="
+        width:0; height:0;
+        border-left:10px solid transparent;
+        border-right:10px solid transparent;
+        border-bottom:22px solid ${color};
+        filter:drop-shadow(0 2px 4px rgba(0,0,0,.6));
+        transform:rotate(${heading}deg);
+        transform-origin:center center;
+      "></div>`,
+      iconSize:[20,22], iconAnchor:[10,11], className:''
+    });
+    if (myMarker) map.removeLayer(myMarker);
+    myMarker = L.marker([lat, lng], { icon, rotationAngle: heading, rotationOrigin: 'center' })
+      .addTo(map);
+  }
+
+  function updateMyMarker(lat, lng, heading) {
     if (!mapReady) { initMap(lat, lng); return; }
+
+    // Calcul du cap depuis la différence de positions si heading non dispo
+    if ((heading === null || isNaN(heading)) && prevLat !== null) {
+      const dLng = lng - prevLng;
+      const dLat = lat - prevLat;
+      if (Math.abs(dLat) > 0.000005 || Math.abs(dLng) > 0.000005) {
+        heading = (Math.atan2(dLng, dLat) * 180 / Math.PI + 360) % 360;
+      } else {
+        heading = currentBearing; // pas de mouvement → garde le cap actuel
+      }
+    }
+    if (heading === null || isNaN(heading)) heading = 0;
+
+    // Lissage du cap (évite les sauts brusques)
+    const diff = ((heading - currentBearing + 540) % 360) - 180;
+    currentBearing = (currentBearing + diff * 0.4 + 360) % 360;
+
     myMarker.setLatLng([lat, lng]);
     alertCircle.setLatLng([lat, lng]);
-    map.panTo([lat, lng], { animate: true, duration: 0.5 });
+
+    // Rotation de la carte : direction de déplacement = haut
+    if (map.setBearing) map.setBearing(currentBearing);
+
+    // Centrage fluide
+    map.panTo([lat, lng], { animate: true, duration: 0.3, noMoveStart: true });
+
+    prevLat = lat; prevLng = lng;
   }
 
   function updateOtherMarker(lat, lng, otherRole, danger) {
     if (!mapReady) return;
-    const color = danger ? '#DC2626' : '#16A34A';
-    const label = otherRole === 'vru' ? '🚴' : '🚗';
+    const color = danger ? '#DC2626' : '#4ADE80';
+    const pulse = danger ? `animation:pulse-dot 1s ease-in-out infinite;` : '';
     const icon  = L.divIcon({
-      html: `<div style="background:${color};width:20px;height:20px;border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:11px;">${label}</div>`,
-      iconSize:[20,20], iconAnchor:[10,10], className:''
+      html: `<div style="
+        background:${color}; width:22px; height:22px; border-radius:50%;
+        border:3px solid white; box-shadow:0 2px 8px rgba(0,0,0,.6);
+        display:flex; align-items:center; justify-content:center;
+        font-size:12px; ${pulse}
+      ">${otherRole === 'vru' ? '🚴' : '🚗'}</div>`,
+      iconSize:[22,22], iconAnchor:[11,11], className:''
     });
+
     if (!otherMarker) {
-      otherMarker = L.marker([lat, lng], { icon })
-        .addTo(map)
+      otherMarker = L.marker([lat, lng], { icon }).addTo(map)
         .bindPopup(otherRole === 'vru' ? '🚴 Usager Vulnérable' : '🚗 Conducteur');
     } else {
       otherMarker.setLatLng([lat, lng]);
       otherMarker.setIcon(icon);
     }
-    // Couleur du cercle selon danger
+
     alertCircle.setStyle({
       color:       danger ? '#DC2626' : '#2563EB',
-      fillColor:   danger ? '#FEE2E2' : '#DBEAFE'
+      fillColor:   danger ? '#DC2626' : '#2563EB',
+      fillOpacity: danger ? 0.18 : 0.12
     });
+  }
+
+  function updateDistBadge(danger, distance) {
+    const badge = document.getElementById('map-dist-badge');
+    if (!mapReady) return;
+    badge.style.display = 'block';
+    badge.className = `map-dist-badge ${danger ? 'danger' : 'safe'}`;
+    badge.textContent = danger ? `🚨 ${distance} m` : `✅ ${distance} m`;
   }
 
   // ── Audio ────────────────────────────────────────────────────────────────────
@@ -390,6 +476,7 @@
     });
     socket.on('alert', ({ danger, distance, otherLat, otherLng, otherRole }) => {
       updateAlert(danger, distance);
+      updateDistBadge(danger, distance);
       if (otherLat !== undefined) updateOtherMarker(otherLat, otherLng, otherRole, danger);
     });
   }
@@ -405,14 +492,14 @@
   }
 
   function onPosition(pos) {
-    const { latitude:lat, longitude:lng, accuracy } = pos.coords;
+    const { latitude:lat, longitude:lng, accuracy, heading } = pos.coords;
     gpsActive = true;
     const btn = document.getElementById('btn-gps');
     btn.className=`btn btn-stop`; btn.innerHTML='⏹ Arrêter GPS'; btn.disabled=false;
     document.getElementById('gps-status').textContent = `GPS ±${Math.round(accuracy)} m`;
     document.getElementById('gps-status').className   = 'card-value green';
     document.getElementById('my-position').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    updateMyMarker(lat, lng);
+    updateMyMarker(lat, lng, heading);
     sendPosition(lat, lng);
     if (document.getElementById('alert-banner').className.includes('waiting'))
       setBanner('safe','✅','Zone sécurisée','Aucun danger détecté');
@@ -462,7 +549,7 @@
       const lat = role==='vru' ? DEMO_BASE_LAT + offset : DEMO_BASE_LAT;
       const lng = DEMO_BASE_LNG;
       document.getElementById('my-position').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-      updateMyMarker(lat, lng);
+      updateMyMarker(lat, lng, null); // heading calculé depuis les positions successives
       sendPosition(lat, lng);
     }, 500);
   }
