@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>V2P — Sécurité Route</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- Leaflet.js — carte interactive -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    :root {
+      --blue:#2563EB; --blue-dark:#1E3A5F; --blue-light:#EFF6FF;
+      --green:#16A34A; --green-bg:#F0FDF4;
+      --red:#DC2626; --red-bg:#FEF2F2;
+      --orange:#EA580C; --gray:#6B7280; --white:#FFFFFF;
+    }
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:#F9FAFB; min-height:100vh; }
+
+    /* ── SÉLECTION RÔLE ── */
+    #screen-select { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding:24px; background:white; }
+    .logo-area { text-align:center; margin-bottom:36px; }
+    .logo-icon { font-size:56px; display:block; margin-bottom:10px; }
+    .logo-title { font-size:26px; font-weight:800; color:var(--blue-dark); }
+    .logo-sub { font-size:13px; color:var(--gray); margin-top:4px; }
+    .select-label { font-size:13px; font-weight:700; color:var(--gray); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px; }
+    .role-cards { display:flex; flex-direction:column; gap:14px; width:100%; max-width:340px; }
+    .role-card { display:flex; align-items:center; gap:16px; padding:20px; border-radius:16px; border:2px solid transparent; cursor:pointer; transition:transform .15s; }
+    .role-card:active { transform:scale(.97); }
+    .role-card.vru { background:var(--blue-light); border-color:var(--blue); }
+    .role-card.driver { background:#FFF7ED; border-color:var(--orange); }
+    .role-icon { font-size:38px; flex-shrink:0; }
+    .role-name { font-size:17px; font-weight:700; color:var(--blue-dark); }
+    .role-card.driver .role-name { color:#7C2D12; }
+    .role-desc { font-size:12px; color:var(--gray); margin-top:3px; line-height:1.4; }
+
+    /* ── ÉCRAN PRINCIPAL ── */
+    #screen-main { display:none; flex-direction:column; min-height:100vh; }
+    .header { padding:14px 18px 10px; display:flex; align-items:center; justify-content:space-between; }
+    .header.vru { background:var(--blue); }
+    .header.driver { background:var(--orange); }
+    .header-left { display:flex; align-items:center; gap:10px; }
+    .header-icon { font-size:24px; }
+    .header-title { font-size:17px; font-weight:700; color:white; }
+    .header-sub { font-size:11px; color:rgba(255,255,255,.7); }
+    .conn-badge { padding:4px 10px; border-radius:20px; background:rgba(255,255,255,.2); font-size:11px; font-weight:600; color:white; }
+    .conn-badge.online { background:rgba(255,255,255,.9); color:var(--green); }
+
+    /* Bannière alerte */
+    .alert-banner { margin:12px 14px; border-radius:14px; padding:16px; display:flex; align-items:center; gap:12px; transition:all .3s; }
+    .alert-banner.safe    { background:var(--green-bg); border:2px solid #BBF7D0; }
+    .alert-banner.danger  { background:var(--red-bg); border:2px solid #FECACA; animation:pulse-bdr .8s ease-in-out infinite; }
+    .alert-banner.waiting { background:#F3F4F6; border:2px solid #E5E7EB; }
+    @keyframes pulse-bdr { 0%,100%{border-color:#FECACA;box-shadow:0 0 0 0 rgba(220,38,38,.3)} 50%{border-color:var(--red);box-shadow:0 0 0 8px rgba(220,38,38,0)} }
+    .alert-emoji { font-size:36px; flex-shrink:0; }
+    .alert-title { font-size:16px; font-weight:800; }
+    .alert-banner.safe .alert-title   { color:var(--green); }
+    .alert-banner.danger .alert-title { color:var(--red); }
+    .alert-banner.waiting .alert-title { color:var(--gray); }
+    .alert-detail { font-size:12px; color:var(--gray); margin-top:2px; }
+    .alert-distance { font-size:24px; font-weight:900; flex-shrink:0; min-width:56px; text-align:right; }
+    .alert-banner.safe .alert-distance   { color:var(--green); }
+    .alert-banner.danger .alert-distance { color:var(--red); }
+
+    /* ── CARTE ── */
+    .map-container { margin:0 14px 12px; border-radius:14px; overflow:hidden; border:2px solid #E5E7EB; position:relative; }
+    .map-container.danger-map { border-color:var(--red); }
+    .map-container.safe-map   { border-color:#BBF7D0; }
+    #map { height:220px; width:100%; }
+    .map-label {
+      position:absolute; top:8px; left:8px; z-index:1000;
+      background:rgba(255,255,255,.92); padding:4px 10px; border-radius:20px;
+      font-size:11px; font-weight:700; color:var(--blue-dark);
+      box-shadow:0 1px 4px rgba(0,0,0,.15);
+    }
+    .map-waiting { display:flex; align-items:center; justify-content:center; height:220px; background:#F9FAFB; flex-direction:column; gap:8px; }
+    .map-waiting-icon { font-size:32px; }
+    .map-waiting-text { font-size:13px; color:var(--gray); }
+
+    /* Cards */
+    .cards-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:0 14px; }
+    .info-card { background:white; border-radius:12px; padding:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .info-card.full { grid-column:1/-1; }
+    .card-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.8px; color:var(--gray); margin-bottom:5px; }
+    .card-value { font-size:16px; font-weight:700; color:var(--blue-dark); }
+    .card-value.small { font-size:12px; font-weight:500; color:#374151; line-height:1.5; }
+    .card-value.green { color:var(--green); }
+    .card-value.red   { color:var(--red); }
+    .card-value.gray  { color:var(--gray); font-weight:500; }
+    .pills { display:flex; gap:8px; margin-top:6px; }
+    .pill { flex:1; text-align:center; padding:6px; border-radius:8px; font-size:12px; font-weight:600; }
+    .pill.vru    { background:var(--blue-light); color:var(--blue); }
+    .pill.driver { background:#FFF7ED; color:var(--orange); }
+
+    /* Boutons */
+    .btns { display:flex; gap:10px; margin:12px 14px; }
+    .btn { flex:1; padding:15px 8px; border-radius:12px; border:none; font-size:13px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:7px; transition:transform .15s; }
+    .btn:active { transform:scale(.97); }
+    .btn-primary.vru    { background:var(--blue); color:white; }
+    .btn-primary.driver { background:var(--orange); color:white; }
+    .btn-stop  { background:#F3F4F6; color:var(--red); border:2px solid #FECACA; }
+    .btn-demo  { background:#F3F4F6; color:var(--blue-dark); border:2px solid #E5E7EB; }
+    .btn-demo.active { background:#FFF7ED; color:var(--orange); border-color:var(--orange); }
+
+    /* Demo info */
+    .demo-info { margin:0 14px 10px; padding:10px 14px; background:#FFFBEB; border:1px solid #FCD34D; border-radius:10px; font-size:12px; color:#92400E; display:none; }
+    .demo-info.show { display:block; }
+
+    /* Log */
+    .log-section { margin:0 14px 20px; }
+    .log-title { font-size:11px; font-weight:700; color:var(--gray); text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px; }
+    .log-box { background:white; border-radius:10px; padding:10px; max-height:110px; overflow-y:auto; font-size:11px; font-family:'SF Mono',Menlo,monospace; color:#374151; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .log-entry { padding:2px 0; border-bottom:1px solid #F3F4F6; }
+    .log-entry:last-child { border-bottom:none; }
+    .log-time { color:var(--gray); margin-right:5px; }
+    .log-alert { color:var(--red); font-weight:700; }
+    .log-safe  { color:var(--green); }
+
+    /* Toast notification (remplace le flash plein écran) */
+    #toast {
+      position: fixed;
+      top: -120px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: calc(100% - 28px);
+      max-width: 420px;
+      background: var(--red);
+      color: white;
+      border-radius: 16px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      z-index: 9999;
+      box-shadow: 0 8px 24px rgba(220,38,38,.45);
+      transition: top .35s cubic-bezier(.34,1.56,.64,1);
+    }
+    #toast.show { top: 14px; }
+    .toast-icon  { font-size: 30px; flex-shrink: 0; }
+    .toast-body  { flex: 1; }
+    .toast-title { font-size: 15px; font-weight: 800; }
+    .toast-dist  { font-size: 12px; opacity: .85; margin-top: 2px; }
+    .toast-close { font-size: 18px; opacity: .7; cursor: pointer; padding: 4px; flex-shrink: 0; }
+
+    .spinner { display:inline-block; width:13px; height:13px; border:2px solid rgba(255,255,255,.4); border-top-color:white; border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; }
+    @keyframes spin { to{transform:rotate(360deg)} }
+  </style>
+</head>
+<body>
+
+<!-- SÉLECTION RÔLE -->
+<div id="screen-select">
+  <div class="logo-area">
+    <span class="logo-icon">🛡️</span>
+    <div class="logo-title">Application V2P</div>
+    <div class="logo-sub">Sécurité des Usagers Vulnérables de la Route</div>
+  </div>
+  <p class="select-label">Je suis…</p>
+  <div class="role-cards">
+    <div class="role-card vru" onclick="selectRole('vru')">
+      <div class="role-icon">🚴</div>
+      <div>
+        <div class="role-name">Usager Vulnérable</div>
+        <div class="role-desc">Cycliste, piéton, trottinette — je veux être alerté des véhicules proches</div>
+      </div>
+    </div>
+    <div class="role-card driver" onclick="selectRole('driver')">
+      <div class="role-icon">🚗</div>
+      <div>
+        <div class="role-name">Conducteur</div>
+        <div class="role-desc">Je veux être alerté de la présence d'usagers vulnérables à proximité</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ÉCRAN PRINCIPAL -->
+<div id="screen-main">
+  <div class="header" id="main-header">
+    <div class="header-left">
+      <span class="header-icon" id="header-icon"></span>
+      <div>
+        <div class="header-title" id="header-title"></div>
+        <div class="header-sub">Application V2P • POC</div>
+      </div>
+    </div>
+    <div class="conn-badge" id="conn-badge">⚡ Connexion…</div>
+  </div>
+
+  <!-- Bannière alerte -->
+  <div class="alert-banner waiting" id="alert-banner">
+    <div class="alert-emoji" id="alert-emoji">📡</div>
+    <div style="flex:1">
+      <div class="alert-title" id="alert-title">En attente</div>
+      <div class="alert-detail" id="alert-detail">Démarre le GPS ou le Mode Démo</div>
+    </div>
+    <div class="alert-distance" id="alert-distance" style="display:none"></div>
+  </div>
+
+  <!-- Carte -->
+  <div class="map-container" id="map-container">
+    <div class="map-waiting" id="map-waiting">
+      <div class="map-waiting-icon">🗺️</div>
+      <div class="map-waiting-text">La carte apparaît dès que le GPS est actif</div>
+    </div>
+    <div id="map" style="display:none"></div>
+    <div class="map-label" id="map-label" style="display:none">📍 Carte en temps réel</div>
+  </div>
+
+  <!-- Cards -->
+  <div class="cards-grid">
+    <div class="info-card">
+      <div class="card-label">Statut GPS</div>
+      <div class="card-value gray" id="gps-status">Inactif</div>
+    </div>
+    <div class="info-card">
+      <div class="card-label">Latence</div>
+      <div class="card-value gray" id="latency-val">— ms</div>
+    </div>
+    <div class="info-card">
+      <div class="card-label">Ma position</div>
+      <div class="card-value small gray" id="my-position">—</div>
+    </div>
+    <div class="info-card">
+      <div class="card-label">Alertes déclenchées</div>
+      <div class="card-value gray" id="alert-count">0</div>
+    </div>
+    <div class="info-card full">
+      <div class="card-label">Utilisateurs connectés</div>
+      <div class="pills">
+        <div class="pill vru"    id="pill-vru">🚴 VRU : 0</div>
+        <div class="pill driver" id="pill-driver">🚗 Conducteurs : 0</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Boutons -->
+  <div class="btns">
+    <button class="btn btn-primary" id="btn-gps"  onclick="toggleGPS()">📍 Démarrer GPS</button>
+    <button class="btn btn-demo"    id="btn-demo" onclick="toggleDemo()">🎬 Mode Démo</button>
+  </div>
+
+  <div class="demo-info" id="demo-info">
+    🎬 <strong>Mode Démo actif</strong> — Positions simulées se rapprochant automatiquement. Idéal pour la présentation.
+  </div>
+
+  <div class="log-section">
+    <div class="log-title">Journal des événements</div>
+    <div class="log-box" id="log-box">
+      <div class="log-entry"><span class="log-time">--:--:--</span>Application démarrée</div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST ALERTE -->
+<div id="toast">
+  <div class="toast-icon">🚨</div>
+  <div class="toast-body">
+    <div class="toast-title" id="toast-title">DANGER !</div>
+    <div class="toast-dist"  id="toast-dist"></div>
+  </div>
+  <div class="toast-close" onclick="dismissToast()">✕</div>
+</div>
+
+<script>
+  // ── État global ──────────────────────────────────────────────────────────────
+  let role = null, socket = null;
+  let gpsActive = false, watchId = null;
+  let demoActive = false, demoInterval = null, demoStep = 0;
+  let alertCount = 0, lastDanger = null;
+  let lastSendTime = 0, audioCtx = null;
+  let toastTimeout = null, alarmInterval = null;
+
+  // ── Carte Leaflet ────────────────────────────────────────────────────────────
+  let map = null, myMarker = null, otherMarker = null, alertCircle = null;
+  let mapReady = false;
+
+  function initMap(lat, lng) {
+    if (mapReady) return;
+    document.getElementById('map-waiting').style.display = 'none';
+    document.getElementById('map').style.display         = 'block';
+    document.getElementById('map-label').style.display   = 'block';
+
+    map = L.map('map', { zoomControl: true, attributionControl: false }).setView([lat, lng], 17);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+    // Marqueur "moi"
+    const myIcon = L.divIcon({
+      html: `<div style="background:${role==='vru'?'#2563EB':'#EA580C'};width:16px;height:16px;border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,.4)"></div>`,
+      iconSize:[16,16], iconAnchor:[8,8], className:''
+    });
+    myMarker = L.marker([lat, lng], { icon: myIcon })
+      .addTo(map)
+      .bindPopup(role === 'vru' ? '🚴 Moi (VRU)' : '🚗 Moi (Conducteur)');
+
+    // Cercle d'alerte (50 m autour de moi)
+    alertCircle = L.circle([lat, lng], {
+      radius: 50, color: '#2563EB', fillColor: '#DBEAFE',
+      fillOpacity: 0.25, weight: 2, dashArray: '6 4'
+    }).addTo(map);
+
+    mapReady = true;
+  }
+
+  function updateMyMarker(lat, lng) {
+    if (!mapReady) { initMap(lat, lng); return; }
+    myMarker.setLatLng([lat, lng]);
+    alertCircle.setLatLng([lat, lng]);
+    map.panTo([lat, lng], { animate: true, duration: 0.5 });
+  }
+
+  function updateOtherMarker(lat, lng, otherRole, danger) {
+    if (!mapReady) return;
+    const color = danger ? '#DC2626' : '#16A34A';
+    const label = otherRole === 'vru' ? '🚴' : '🚗';
+    const icon  = L.divIcon({
+      html: `<div style="background:${color};width:20px;height:20px;border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:11px;">${label}</div>`,
+      iconSize:[20,20], iconAnchor:[10,10], className:''
+    });
+    if (!otherMarker) {
+      otherMarker = L.marker([lat, lng], { icon })
+        .addTo(map)
+        .bindPopup(otherRole === 'vru' ? '🚴 Usager Vulnérable' : '🚗 Conducteur');
+    } else {
+      otherMarker.setLatLng([lat, lng]);
+      otherMarker.setIcon(icon);
+    }
+    // Couleur du cercle selon danger
+    alertCircle.setStyle({
+      color:       danger ? '#DC2626' : '#2563EB',
+      fillColor:   danger ? '#FEE2E2' : '#DBEAFE'
+    });
+  }
+
+  // ── Audio ────────────────────────────────────────────────────────────────────
+  function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }
+  function playBeep(freq=880, type='square', vol=0.35, duration=0.18) {
+    try {
+      initAudio();
+      const now = audioCtx.currentTime;
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      o.type = type; o.frequency.value = freq;
+      g.gain.setValueAtTime(vol, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + duration);
+      o.start(now); o.stop(now + duration + 0.02);
+    } catch(e) {}
+  }
+
+  function startAlarm() {
+    if (alarmInterval) return; // déjà actif
+    playBeep(880, 'square', 0.35, 0.18); // premier bip immédiat
+    alarmInterval = setInterval(() => playBeep(880, 'square', 0.35, 0.18), 900);
+  }
+
+  function stopAlarm() {
+    if (alarmInterval) { clearInterval(alarmInterval); alarmInterval = null; }
+    playBeep(440, 'sine', 0.2, 0.3); // bip "retour au vert"
+  }
+
+  // ── Sélection rôle ───────────────────────────────────────────────────────────
+  function selectRole(r) {
+    role = r;
+    document.getElementById('screen-select').style.display = 'none';
+    document.getElementById('screen-main').style.display   = 'flex';
+    const isVRU = role === 'vru';
+    document.getElementById('main-header').className    = `header ${role}`;
+    document.getElementById('header-icon').textContent  = isVRU ? '🚴' : '🚗';
+    document.getElementById('header-title').textContent = isVRU ? 'Usager Vulnérable' : 'Conducteur';
+    document.getElementById('btn-gps').className        = `btn btn-primary ${role}`;
+    connectSocket();
+  }
+
+  // ── Socket.io ────────────────────────────────────────────────────────────────
+  function connectSocket() {
+    socket = io();
+    socket.on('connect', () => {
+      socket.emit('register', role);
+      setBadge('online', '🟢 Connecté');
+      addLog('Connecté au serveur', 'safe');
+    });
+    socket.on('registered', ({ alertDistance }) => {
+      addLog(`Rôle : ${role==='vru'?'Usager Vulnérable':'Conducteur'} — seuil ${alertDistance} m`);
+    });
+    socket.on('disconnect', () => { setBadge('','🔴 Déconnecté'); addLog('Déconnecté','alert'); });
+    socket.on('status', ({ vru, driver }) => {
+      document.getElementById('pill-vru').textContent    = `🚴 VRU : ${vru}`;
+      document.getElementById('pill-driver').textContent = `🚗 Conducteurs : ${driver}`;
+    });
+    socket.on('alert', ({ danger, distance, otherLat, otherLng, otherRole }) => {
+      updateAlert(danger, distance);
+      if (otherLat !== undefined) updateOtherMarker(otherLat, otherLng, otherRole, danger);
+    });
+  }
+
+  // ── GPS réel ─────────────────────────────────────────────────────────────────
+  function toggleGPS() {
+    if (gpsActive) { stopGPS(); return; }
+    if (!navigator.geolocation) { alert('GPS non disponible.'); return; }
+    const btn = document.getElementById('btn-gps');
+    btn.innerHTML = '<span class="spinner"></span> GPS…'; btn.disabled = true;
+    watchId = navigator.geolocation.watchPosition(onPosition, onGPSError,
+      { enableHighAccuracy:true, maximumAge:0, timeout:10000 });
+  }
+
+  function onPosition(pos) {
+    const { latitude:lat, longitude:lng, accuracy } = pos.coords;
+    gpsActive = true;
+    const btn = document.getElementById('btn-gps');
+    btn.className=`btn btn-stop`; btn.innerHTML='⏹ Arrêter GPS'; btn.disabled=false;
+    document.getElementById('gps-status').textContent = `GPS ±${Math.round(accuracy)} m`;
+    document.getElementById('gps-status').className   = 'card-value green';
+    document.getElementById('my-position').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    updateMyMarker(lat, lng);
+    sendPosition(lat, lng);
+    if (document.getElementById('alert-banner').className.includes('waiting'))
+      setBanner('safe','✅','Zone sécurisée','Aucun danger détecté');
+  }
+
+  function onGPSError(err) {
+    const btn = document.getElementById('btn-gps');
+    btn.className=`btn btn-primary ${role}`; btn.innerHTML='📍 Démarrer GPS'; btn.disabled=false;
+    addLog(`Erreur GPS : ${err.message}`,'alert');
+    document.getElementById('gps-status').textContent='Erreur GPS';
+    document.getElementById('gps-status').className='card-value red';
+  }
+
+  function stopGPS() {
+    if (watchId!==null) navigator.geolocation.clearWatch(watchId);
+    gpsActive=false;
+    const btn=document.getElementById('btn-gps');
+    btn.className=`btn btn-primary ${role}`; btn.innerHTML='📍 Démarrer GPS';
+    document.getElementById('gps-status').textContent='Inactif';
+    document.getElementById('gps-status').className='card-value gray';
+    setBanner('waiting','📡','En attente','Démarre le GPS ou le Mode Démo');
+    document.getElementById('alert-distance').style.display='none';
+    addLog('GPS arrêté');
+  }
+
+  // ── Mode Démo ─────────────────────────────────────────────────────────────────
+  const DEMO_BASE_LAT = 48.8566, DEMO_BASE_LNG = 2.3522;
+  const DEMO_STEPS = 80;
+
+  function toggleDemo() { demoActive ? stopDemo() : startDemo(); }
+
+  function startDemo() {
+    demoActive=true; demoStep=0;
+    document.getElementById('btn-demo').textContent='⏹ Arrêter Démo';
+    document.getElementById('btn-demo').className='btn btn-demo active';
+    document.getElementById('demo-info').classList.add('show');
+    document.getElementById('gps-status').textContent='Mode Démo';
+    document.getElementById('gps-status').className='card-value green';
+    addLog('Mode Démo démarré','safe');
+    if (gpsActive) stopGPS();
+
+    demoInterval = setInterval(() => {
+      demoStep++;
+      if (demoStep > DEMO_STEPS) demoStep = 0;
+      const progress = Math.abs(Math.sin(demoStep * Math.PI / DEMO_STEPS));
+      const offset   = 0.0018 * (1 - progress); // ~200m max
+      const lat = role==='vru' ? DEMO_BASE_LAT + offset : DEMO_BASE_LAT;
+      const lng = DEMO_BASE_LNG;
+      document.getElementById('my-position').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      updateMyMarker(lat, lng);
+      sendPosition(lat, lng);
+    }, 500);
+  }
+
+  function stopDemo() {
+    demoActive=false; clearInterval(demoInterval);
+    document.getElementById('btn-demo').textContent='🎬 Mode Démo';
+    document.getElementById('btn-demo').className='btn btn-demo';
+    document.getElementById('demo-info').classList.remove('show');
+    document.getElementById('gps-status').textContent='Inactif';
+    document.getElementById('gps-status').className='card-value gray';
+    setBanner('waiting','📡','En attente','Démarre le GPS ou le Mode Démo');
+    document.getElementById('alert-distance').style.display='none';
+    lastDanger=null; addLog('Mode Démo arrêté');
+  }
+
+  // ── Envoi position ───────────────────────────────────────────────────────────
+  function sendPosition(lat, lng) {
+    lastSendTime = Date.now();
+    if (socket?.connected) socket.emit('position', { lat, lng });
+  }
+
+  // ── Alerte ───────────────────────────────────────────────────────────────────
+  function updateAlert(danger, distance) {
+    if (lastSendTime) {
+      const ms = Date.now() - lastSendTime;
+      document.getElementById('latency-val').textContent = `${ms} ms`;
+      document.getElementById('latency-val').className   = ms < 300 ? 'card-value green' : 'card-value red';
+    }
+    const distEl = document.getElementById('alert-distance');
+    distEl.style.display='block'; distEl.textContent=`${distance} m`;
+
+    const other = role==='vru' ? 'véhicule' : 'usager vulnérable';
+    if (danger) {
+      setBanner('danger','🚨','DANGER !',`${other.charAt(0).toUpperCase()+other.slice(1)} à ${distance} m — Ralentissez !`);
+      document.getElementById('map-container').className='map-container danger-map';
+      if (lastDanger!==true) {
+        alertCount++;
+        document.getElementById('alert-count').textContent=alertCount;
+        document.getElementById('alert-count').className='card-value red';
+        startAlarm();
+        showToast(distance, role==='vru' ? 'Véhicule proche !' : 'Usager vulnérable proche !');
+        addLog(`🚨 ALERTE — ${other} à ${distance} m`,'alert');
+      }
+    } else {
+      setBanner('safe','✅','Zone sécurisée',`Distance : ${distance} m`);
+      document.getElementById('map-container').className='map-container safe-map';
+      if (lastDanger===true) {
+        stopAlarm();
+        dismissToast();
+        addLog(`Zone dégagée — ${distance} m`,'safe');
+      }
+    }
+    lastDanger=danger;
+  }
+
+  function setBanner(state,emoji,title,detail) {
+    document.getElementById('alert-banner').className   =`alert-banner ${state}`;
+    document.getElementById('alert-emoji').textContent  =emoji;
+    document.getElementById('alert-title').textContent  =title;
+    document.getElementById('alert-detail').textContent =detail;
+  }
+
+  function showToast(distance, message) {
+    document.getElementById('toast-title').textContent = message;
+    document.getElementById('toast-dist').textContent  = `À seulement ${distance} mètres !`;
+    document.getElementById('toast').classList.add('show');
+    // Pas de disparition auto — reste tant que danger actif
+  }
+  function dismissToast() {
+    document.getElementById('toast').classList.remove('show');
+  }
+
+  function setBadge(state,text) {
+    const b=document.getElementById('conn-badge');
+    b.textContent=text; b.className=state==='online'?'conn-badge online':'conn-badge';
+  }
+
+  function addLog(msg,type='') {
+    const now=new Date();
+    const t=`${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+    const box=document.getElementById('log-box');
+    const div=document.createElement('div');
+    div.className='log-entry';
+    div.innerHTML=`<span class="log-time">${t}</span><span class="${type==='alert'?'log-alert':type==='safe'?'log-safe':''}">${msg}</span>`;
+    box.insertBefore(div,box.firstChild);
+    while(box.children.length>50) box.removeChild(box.lastChild);
+  }
+</script>
+</body>
+</html>
