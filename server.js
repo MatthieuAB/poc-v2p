@@ -16,7 +16,7 @@ const io     = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const PORT           = 3000;
+const PORT           = process.env.PORT || 3000;
 const ALERT_DISTANCE = 50;
 const CLEANUP_DELAY  = 5000;
 
