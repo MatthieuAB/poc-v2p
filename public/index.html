@@ -573,41 +573,75 @@
     addLog('Mode Démo démarré — véhicule en approche', 'safe');
     if (gpsActive) stopGPS();
 
-    // Initialiser la carte sur la position du VRU dès le départ
     const vehStart = DEMO_VEHICLE_WAYPOINTS[0];
-    updateMyMarker(DEMO_VRU_LAT, DEMO_VRU_LNG, null);
-    // Afficher le véhicule au point de départ (loin, vert)
-    if (mapReady) updateOtherMarker(vehStart[0], vehStart[1], 'driver', false);
-    setBanner('safe', '✅', 'Zone sécurisée', 'Véhicule à ~260 m');
+
+    // 1. Initialiser la carte centrée sur le VRU
+    if (!mapReady) {
+      initMap(DEMO_VRU_LAT, DEMO_VRU_LNG);
+    } else {
+      _createMyMarker(DEMO_VRU_LAT, DEMO_VRU_LNG, 0);
+      alertCircle.setLatLng([DEMO_VRU_LAT, DEMO_VRU_LNG]);
+    }
+
+    // 2. Zoomer pour que les DEUX marqueurs soient visibles dès le départ
+    setTimeout(() => {
+      if (!mapReady) return;
+      updateOtherMarker(vehStart[0], vehStart[1], 'driver', false);
+      map.fitBounds(
+        L.latLngBounds([DEMO_VRU_LAT, DEMO_VRU_LNG], [vehStart[0], vehStart[1]]).pad(0.25),
+        { maxZoom: 16 }
+      );
+      setBanner('safe', '✅', 'Zone sécurisée', 'Véhicule à ~260 m');
+    }, 250);
+
+    // Pause de 8 s à la fin de la route avant de reboucler (évite le téléport brutal)
+    const PAUSE_AT_END = 16;
+    const CYCLE_STEPS  = DEMO_TOTAL_STEPS + PAUSE_AT_END;
 
     demoInterval = setInterval(() => {
-      // ── Position VRU : quasi-immobile (bruit ±~2 m)
+      // ── VRU : quasi-immobile (bruit ±~2 m)
       const myLat = DEMO_VRU_LAT + (Math.random() - 0.5) * 0.00004;
       const myLng = DEMO_VRU_LNG + (Math.random() - 0.5) * 0.00004;
 
-      // ── Position véhicule : interpolation entre waypoints
-      const t      = demoStep % DEMO_TOTAL_STEPS;
-      const segIdx = Math.floor(t / DEMO_STEPS_PER_SEG);
-      const frac   = (t % DEMO_STEPS_PER_SEG) / DEMO_STEPS_PER_SEG;
-      const from   = DEMO_VEHICLE_WAYPOINTS[segIdx];
-      const to     = DEMO_VEHICLE_WAYPOINTS[Math.min(segIdx + 1, DEMO_VEHICLE_WAYPOINTS.length - 1)];
-      const vehLat = from[0] + (to[0] - from[0]) * frac;
-      const vehLng = from[1] + (to[1] - from[1]) * frac;
+      // ── Véhicule : interpolation OU pause en fin de route
+      const t = demoStep % CYCLE_STEPS;
+      let vehLat, vehLng;
+      if (t < DEMO_TOTAL_STEPS) {
+        const segIdx = Math.floor(t / DEMO_STEPS_PER_SEG);
+        const frac   = (t % DEMO_STEPS_PER_SEG) / DEMO_STEPS_PER_SEG;
+        const from   = DEMO_VEHICLE_WAYPOINTS[segIdx];
+        const to     = DEMO_VEHICLE_WAYPOINTS[Math.min(segIdx + 1, DEMO_VEHICLE_WAYPOINTS.length - 1)];
+        vehLat = from[0] + (to[0] - from[0]) * frac;
+        vehLng = from[1] + (to[1] - from[1]) * frac;
+      } else {
+        // Pause sur le dernier waypoint (loin du VRU)
+        vehLat = DEMO_VEHICLE_WAYPOINTS[DEMO_VEHICLE_WAYPOINTS.length - 1][0];
+        vehLng = DEMO_VEHICLE_WAYPOINTS[DEMO_VEHICLE_WAYPOINTS.length - 1][1];
+      }
 
       demoStep++;
 
-      // ── Distance & alerte calculées localement (pas besoin du serveur)
+      // ── Distance & alerte (calcul local)
       const dist   = Math.round(haversineLocal(myLat, myLng, vehLat, vehLng));
       const danger = dist <= 50;
 
-      // ── Mise à jour carte
+      // ── Mise à jour marqueurs SANS panTo (on gère la vue avec fitBounds)
       document.getElementById('my-position').textContent = `${myLat.toFixed(6)}, ${myLng.toFixed(6)}`;
-      updateMyMarker(myLat, myLng, null);
-      if (mapReady) updateOtherMarker(vehLat, vehLng, 'driver', danger);
+      if (mapReady) {
+        if (myMarker)    myMarker.setLatLng([myLat, myLng]);
+        if (alertCircle) alertCircle.setLatLng([myLat, myLng]);
+        updateOtherMarker(vehLat, vehLng, 'driver', danger);
+        // Recadrer la carte pour garder les deux marqueurs visibles (toutes les ~1 s)
+        if (demoStep % 2 === 0) {
+          map.fitBounds(
+            L.latLngBounds([myLat, myLng], [vehLat, vehLng]).pad(0.3),
+            { animate: true, duration: 0.8, maxZoom: 17 }
+          );
+        }
+      }
+
       updateDistBadge(danger, dist);
       updateAlert(danger, dist);
-
-      // ── Envoi au serveur (si un 2e appareil est connecté, il reçoit aussi l'alerte)
       sendPosition(myLat, myLng);
     }, 500);
   }
