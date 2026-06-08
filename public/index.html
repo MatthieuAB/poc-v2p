@@ -475,6 +475,7 @@
       document.getElementById('pill-driver').textContent = `🚗 Conducteurs : ${driver}`;
     });
     socket.on('alert', ({ danger, distance, otherLat, otherLng, otherRole }) => {
+      if (demoActive) return; // démo gère tout localement, ignorer le serveur
       updateAlert(danger, distance);
       updateDistBadge(danger, distance);
       if (otherLat !== undefined) updateOtherMarker(otherLat, otherLng, otherRole, danger);
@@ -575,35 +576,41 @@
 
     const vehStart = DEMO_VEHICLE_WAYPOINTS[0];
 
-    // 1. Initialiser la carte centrée sur le VRU
+    // Position initiale de MON marqueur selon le rôle :
+    //   VRU      → je suis le piéton fixe (DEMO_VRU_LAT)
+    //   Conducteur → je suis la voiture (je pars du point de départ)
+    const myInitLat = (role === 'vru') ? DEMO_VRU_LAT : vehStart[0];
+    const myInitLng = (role === 'vru') ? DEMO_VRU_LNG : vehStart[1];
+
     if (!mapReady) {
-      initMap(DEMO_VRU_LAT, DEMO_VRU_LNG);
+      initMap(myInitLat, myInitLng);
     } else {
-      _createMyMarker(DEMO_VRU_LAT, DEMO_VRU_LNG, 0);
-      alertCircle.setLatLng([DEMO_VRU_LAT, DEMO_VRU_LNG]);
+      _createMyMarker(myInitLat, myInitLng, 0);
+      alertCircle.setLatLng([myInitLat, myInitLng]);
     }
 
-    // 2. Zoomer pour que les DEUX marqueurs soient visibles dès le départ
+    // Afficher les deux marqueurs et zoomer pour voir toute la scène
     setTimeout(() => {
       if (!mapReady) return;
-      updateOtherMarker(vehStart[0], vehStart[1], 'driver', false);
+      const otherInitRole = (role === 'vru') ? 'driver' : 'vru';
+      const otherInitLat  = (role === 'vru') ? vehStart[0] : DEMO_VRU_LAT;
+      const otherInitLng  = (role === 'vru') ? vehStart[1] : DEMO_VRU_LNG;
+      updateOtherMarker(otherInitLat, otherInitLng, otherInitRole, false);
       map.fitBounds(
-        L.latLngBounds([DEMO_VRU_LAT, DEMO_VRU_LNG], [vehStart[0], vehStart[1]]).pad(0.25),
+        L.latLngBounds([myInitLat, myInitLng], [otherInitLat, otherInitLng]).pad(0.25),
         { maxZoom: 16 }
       );
       setBanner('safe', '✅', 'Zone sécurisée', 'Véhicule à ~260 m');
     }, 250);
 
-    // Pause de 8 s à la fin de la route avant de reboucler (évite le téléport brutal)
-    const PAUSE_AT_END = 16;
+    const PAUSE_AT_END = 16; // 8 s de pause avant de reboucler
     const CYCLE_STEPS  = DEMO_TOTAL_STEPS + PAUSE_AT_END;
 
     demoInterval = setInterval(() => {
-      // ── VRU : quasi-immobile (bruit ±~2 m)
-      const myLat = DEMO_VRU_LAT + (Math.random() - 0.5) * 0.00004;
-      const myLng = DEMO_VRU_LNG + (Math.random() - 0.5) * 0.00004;
+      // ── Calculer les deux positions absolues (VRU fixe, véhicule sur route)
+      const vruLat = DEMO_VRU_LAT + (Math.random() - 0.5) * 0.00004;
+      const vruLng = DEMO_VRU_LNG + (Math.random() - 0.5) * 0.00004;
 
-      // ── Véhicule : interpolation OU pause en fin de route
       const t = demoStep % CYCLE_STEPS;
       let vehLat, vehLng;
       if (t < DEMO_TOTAL_STEPS) {
@@ -614,27 +621,32 @@
         vehLat = from[0] + (to[0] - from[0]) * frac;
         vehLng = from[1] + (to[1] - from[1]) * frac;
       } else {
-        // Pause sur le dernier waypoint (loin du VRU)
         vehLat = DEMO_VEHICLE_WAYPOINTS[DEMO_VEHICLE_WAYPOINTS.length - 1][0];
         vehLng = DEMO_VEHICLE_WAYPOINTS[DEMO_VEHICLE_WAYPOINTS.length - 1][1];
       }
 
       demoStep++;
 
-      // ── Distance & alerte (calcul local)
-      const dist   = Math.round(haversineLocal(myLat, myLng, vehLat, vehLng));
+      // ── MON marqueur et l'AUTRE selon le rôle
+      const myLat    = (role === 'vru') ? vruLat : vehLat;
+      const myLng    = (role === 'vru') ? vruLng : vehLng;
+      const othLat   = (role === 'vru') ? vehLat : vruLat;
+      const othLng   = (role === 'vru') ? vehLng : vruLng;
+      const othRole  = (role === 'vru') ? 'driver' : 'vru';
+
+      // ── Distance & alerte (calcul local — serveur ignoré en mode démo)
+      const dist   = Math.round(haversineLocal(vruLat, vruLng, vehLat, vehLng));
       const danger = dist <= 50;
 
-      // ── Mise à jour marqueurs SANS panTo (on gère la vue avec fitBounds)
+      // ── Mise à jour carte SANS panTo
       document.getElementById('my-position').textContent = `${myLat.toFixed(6)}, ${myLng.toFixed(6)}`;
       if (mapReady) {
         if (myMarker)    myMarker.setLatLng([myLat, myLng]);
         if (alertCircle) alertCircle.setLatLng([myLat, myLng]);
-        updateOtherMarker(vehLat, vehLng, 'driver', danger);
-        // Recadrer la carte pour garder les deux marqueurs visibles (toutes les ~1 s)
+        updateOtherMarker(othLat, othLng, othRole, danger);
         if (demoStep % 2 === 0) {
           map.fitBounds(
-            L.latLngBounds([myLat, myLng], [vehLat, vehLng]).pad(0.3),
+            L.latLngBounds([myLat, myLng], [othLat, othLng]).pad(0.3),
             { animate: true, duration: 0.8, maxZoom: 17 }
           );
         }
@@ -642,7 +654,7 @@
 
       updateDistBadge(danger, dist);
       updateAlert(danger, dist);
-      sendPosition(myLat, myLng);
+      // Ne pas envoyer au serveur (évite conflits avec vrais appareils connectés)
     }, 500);
   }
 
