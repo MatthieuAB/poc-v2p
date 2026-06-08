@@ -531,25 +531,26 @@
   // Le VRU reste fixe ; le véhicule suit des waypoints GPS sur vraies routes
   // parisiennes ; la distance est calculée localement → alerte à <50 m.
 
-  const DEMO_VRU_LAT = 48.8566, DEMO_VRU_LNG = 2.3522; // VRU immobile, Paris 1er
+  const DEMO_VRU_LAT = 48.8578, DEMO_VRU_LNG = 2.3470;
+  // VRU sur Rue de Rivoli, à l'est de Place du Châtelet (trottoir, pas dans un bâtiment)
 
-  // Itinéraire véhicule : rue nord → jonction rue principale → passage VRU → cap est
-  // Distances / VRU : [0]~260 m safe → [7]~45 m ALERTE → [9] croisement → [13]~260 m safe
+  // Itinéraire réel : Boulevard de Sébastopol (N→S) puis Rue de Rivoli (E→O)
+  // [0] ~570 m safe → [7] ~95 m → [8] ~44 m ALERTE → [9] croisement → [11] ~146 m safe
   const DEMO_VEHICLE_WAYPOINTS = [
-    [48.8588, 2.3510],  // Départ (~260 m — zone sûre)
-    [48.8582, 2.3511],
-    [48.8576, 2.3512],
-    [48.8571, 2.3514],  // ~170 m
-    [48.8569, 2.3515],  // ~120 m — encore sûr
-    [48.8568, 2.3516],  // ~100 m
-    [48.8567, 2.3517],  //  ~70 m
-    [48.8567, 2.3519],  //  ~45 m — ⚠️ ALERTE (<50 m)
-    [48.8566, 2.3520],  //  ~20 m — DANGER
-    [48.8566, 2.3522],  // Croisement exact du VRU
-    [48.8566, 2.3526],  //  ~30 m — encore danger
-    [48.8565, 2.3534],  //  ~90 m — zone dégagée
-    [48.8565, 2.3545],  // ~170 m
-    [48.8564, 2.3556],  // ~260 m — loin, sûr
+    [48.8615, 2.3524],  // Départ nord sur Bvd de Sébastopol (~570 m)
+    [48.8605, 2.3523],  // Descend Bvd Sébastopol
+    [48.8595, 2.3523],
+    [48.8586, 2.3522],  // ~390 m — approche croisement Rue de Rivoli
+    [48.8578, 2.3521],  // Croisement Bvd Sébastopol × Rue de Rivoli (~373 m)
+    [48.8578, 2.3509],  // Tourne sur Rue de Rivoli, cap ouest (~285 m)
+    [48.8578, 2.3496],  // ~190 m — zone sûre
+    [48.8578, 2.3483],  //  ~95 m — zone sûre
+    [48.8578, 2.3476],  //  ~44 m — ⚠️ ALERTE (<50 m)
+    [48.8578, 2.3470],  // Croisement exact du VRU
+    [48.8578, 2.3462],  //  ~59 m — zone dégagée
+    [48.8578, 2.3450],  // ~146 m
+    [48.8578, 2.3438],  // ~234 m
+    [48.8578, 2.3425],  // ~329 m — loin, sûr
   ];
   const DEMO_STEPS_PER_SEG = 4; // 4 × 500 ms = 2 s/segment ≈ 40 km/h
   const DEMO_TOTAL_STEPS   = (DEMO_VEHICLE_WAYPOINTS.length - 1) * DEMO_STEPS_PER_SEG;
